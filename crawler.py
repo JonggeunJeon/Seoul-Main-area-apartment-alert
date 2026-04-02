@@ -1,7 +1,7 @@
 import requests
 import json
 import os
-import hashlib
+import time
 from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -25,8 +25,23 @@ DISTRICTS = {
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://m.land.naver.com/',
+    'Accept': 'application/json, text/plain, */*',
     'Accept-Language': 'ko-KR,ko;q=0.9',
+    'Connection': 'keep-alive',
 }
+
+
+# 🔥 retry + timeout 처리
+def safe_get(url, params=None):
+    for i in range(3):
+        try:
+            r = requests.get(url, params=params, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            print(f'  요청 실패 (시도 {i+1}/3): {e}')
+            time.sleep(2)
+    return None
 
 
 def load_seen():
@@ -81,21 +96,29 @@ def get_articles(district_name, coords):
         'pageSize': 100,
     }
 
+    r = safe_get(url, params)
+    if not r:
+        print(f'  [{district_name}] 최종 실패')
+        return []
+
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=15)
         data = r.json()
         articles = data.get('body', []) or data.get('articleList', []) or []
-        print('  [' + district_name + '] ' + str(len(articles)) + '개 매물 조회됨')
+        print(f'  [{district_name}] {len(articles)}개 매물 조회됨')
         return articles
     except Exception as e:
-        print('  [' + district_name + '] 조회 실패: ' + str(e))
+        print(f'  [{district_name}] JSON 파싱 실패: {e}')
         return []
 
 
 def get_households(complex_no):
     url = 'https://m.land.naver.com/complex/info/' + str(complex_no)
+
+    r = safe_get(url)
+    if not r:
+        return 0
+
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
         data = r.json()
         return int(data.get('totalHouseHoldCount', 0) or data.get('houseHoldCount', 0) or 0)
     except:
@@ -132,6 +155,9 @@ def main():
 
     for district_name, coords in DISTRICTS.items():
         print('\n[' + district_name + '] 검색 중...')
+        
+        time.sleep(2)  # 🔥 요청 간격 (차단 방지)
+
         articles = get_articles(district_name, coords)
 
         for item in articles:
